@@ -65,14 +65,39 @@ def gnereate_sql_file_from_excel(file_name):
             else:
                 data_precision_for_alter = int(data_precision_for_alter)
                 sql_statement = ' alter ' + owner_name_for_alter + '.' + table_name_for_alter + 'ADD COLUMN (' + column_name_for_alter + ' ' + datatype_name_for_alter + '(' + str(data_length_for_alter) + ',' + str(data_precision_for_alter) + ');'
-            print(sql_statement);
+            #print(sql_statement);
             f.write(sql_statement + '\n')
     f.close()
+
+
+def gnereate_ddl_file_for_mising_objects(src_conn,file_name):
+    input_df = pd.read_excel(file_name)
+    cur = src_conn.cursor()
+    owner_name_for_ddl =""
+    object_name_for_ddl =""
+    object_type_for_ddl =""
+    for index, row in input_df.iterrows():
+        if row['WHERE_EXISTS']=='DB1':
+            owner_name_for_ddl = row["OWNER"]
+            object_name_for_ddl  = row["OBJECT_NAME"]
+            object_type_for_ddl =  row["OBJECT_TYPE"]
+            file_name_for_ddl = owner_name_for_ddl + '_' + object_name_for_ddl + '_' + object_type_for_ddl + '.sql'
+            f = open(file_name_for_ddl, "w");
+            ddl_sql_for_execution = "select dbms_metadata.get_ddl('" + object_type_for_ddl + "','" + object_name_for_ddl + "','" + owner_name_for_ddl + "') DDL_SQL from dual"
+            print(ddl_sql_for_execution)
+            cur.execute(ddl_sql_for_execution)
+            res = cur.fetchall()
+            print(res[0]);
+            f.write(res[0][0] + '\n')
+            f.close()
+            break;
+    cur.close();
 
 if __name__ == "__main__":
 
     #Creating DB connection and getting table row count
     orcl.init_oracle_client()
+    orcl.defaults.fetch_lobs = False
     src_sql_cnxn=get_oracle_database_connection(src_server,src_user_name,src_pwd,src_port,src_service_name);
     print('Connected to source oracle')
     trg_sql_cnxn = get_oracle_database_connection(trg_server, trg_user_name, trg_pwd, trg_port, trg_service_name);
@@ -94,9 +119,9 @@ if __name__ == "__main__":
     db_columns_diff = compare_dataframes(src_cols_df, trg_cols_df,['OWNER', 'TABLE_NAME', 'COLUMN_NAME', 'DATA_TYPE'])
     db_columns_diff.to_excel("DB_COLUMNS_DIFF.xlsx", index=False)
 
+    gnereate_sql_file_from_excel("DB_COLUMNS_DIFF.xlsx")
+    gnereate_ddl_file_for_mising_objects(src_sql_cnxn,"DB_OBJECTS_DIFF.xlsx")
     src_sql_cnxn.close();
     trg_sql_cnxn.close();
-
-    gnereate_sql_file_from_excel("DB_COLUMNS_DIFF.xlsx")
 
     print('Script Executed Successfully please validate generated output files')
