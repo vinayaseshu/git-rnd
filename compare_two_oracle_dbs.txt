@@ -77,7 +77,7 @@ def execute_sql_scripts_from_directory(db_conn):
     # Open and read the file as a single buffer
     directory_path = 'E:\gvs_python_rnd'
     file_pattern = '*.sql'
-    filename='FLBL_ALGO_BKP_DUP_08082024_DBRC_ALL_TABLE.sql'
+    filename='aBC.sql'
     for filename in glob.glob(os.path.join(directory_path, file_pattern)):
         with open(filename, 'r') as fd:
             # Process the SQL file here
