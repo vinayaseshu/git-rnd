@@ -1,0 +1,185 @@
+import pandas as pd
+import oracledb as orcl
+import math
+
+import numpy as np
+
+# Oracle Connection Details
+# DB Server1
+
+src_server = 'localhost'  # for a named instance
+src_user_name = 'hr'
+src_pwd = 'hr'
+src_port = '1521'
+src_service_name = 'xe'
+
+# DB Server2
+
+trg_server = 'localhost'  # for a named instance
+trg_user_name = 'newhr'
+trg_pwd = 'newhr'
+trg_port = '1521'
+trg_service_name = 'xe'
+
+
+# FILE VARIABLE
+
+
+def compare_dataframes(df1, df2, on_columns):
+    df = pd.merge(df1, df2, on=on_columns, how='left', indicator='WHERE_EXISTS')
+    df['EXISTS'] = np.where(df.WHERE_EXISTS == 'both', True, False)
+    df['WHERE_EXISTS'] = df['WHERE_EXISTS'].map({'both': 'BOTH', 'left_only': 'GVSPROD'})
+    return df;
+
+
+# function for getting oracle DB connection
+# get_snowflake_database_connection(db_type,snowflake_user,snowflake_password,snowflake_account,snowflZAxake_warehouse,snowflake_database,snowflake_schema):
+def get_oracle_database_connection(dbserver, dbusername, dbpwd, dbport, dbservicename):
+    dsn = f'{dbusername}/{dbpwd}@{dbserver}:{dbport}/{dbservicename}'
+    sql_cnxn = orcl.connect(dsn)
+    return sql_cnxn;
+
+
+def get_results_from_query(sql_cnxn, sql_stmt):
+    df = pd.read_sql(sql_stmt, sql_cnxn);
+    return df;
+
+
+def genereate_ddl_file_for_mising_objects(src_conn, file_name):
+    print('before getting into loop');
+    input_df = pd.read_excel(file_name)
+    # print("head" + input_df.head(4));
+    cur = src_conn.cursor()
+    owner_name_for_ddl = ""
+    object_name_for_ddl = ""
+    object_type_for_ddl = ""
+    print('before getting into loop');
+    for index, row in input_df.iterrows():
+        if row['WHERE_EXISTS'] == 'GVSPROD' and row['OBJECT_TYPE'] != 'PACKAGE BODY' and row['OBJECT_TYPE'] != 'LOB' and \
+                row['OBJECT_TYPE'] != 'TRIGGER':
+            owner_name_for_ddl = row["OWNER"]
+            object_name_for_ddl = row["OBJECT_NAME"]
+            object_type_for_ddl = row["OBJECT_TYPE"]
+            print('before getting ddl');
+            file_name_for_ddl = owner_name_for_ddl + '_' + object_name_for_ddl + '_' + object_type_for_ddl + '.sql'
+            f = open(file_name_for_ddl, "w");
+            ddl_sql_for_execution = "select dbms_metadata.get_ddl('" + object_type_for_ddl + "','" + object_name_for_ddl + "','" + owner_name_for_ddl + "') DDL_SQL from dual"
+            print(ddl_sql_for_execution)
+            try:
+                cur.execute(ddl_sql_for_execution)
+                res = cur.fetchall()
+                # print(res[0]);
+                f.write(res[0][0] + '\n')
+                f.close()
+            # break;
+            except Exception as inst:
+                print("Command skipped: for object " + object_name_for_ddl + ":", inst)
+                continue;
+    cur.close();
+
+
+def execute_sql_scripts_from_directory(db_conn):
+    # Open and read the file as a single buffer
+    directory_path = 'E:\gvs_python_rnd'
+    file_pattern = '*.sql'
+    filename = 'FLBL_ALGO_BKP_DUP_08082024_DBRC_ALL_TABLE.sql'
+    for filename in glob.glob(os.path.join(directory_path, file_pattern)):
+        with open(filename, 'r') as fd:
+            # Process the SQL file here
+            print('before executing select')
+            db_cur = db_conn.cursor()
+            sqlFile = fd.read()
+            fd.close()
+            # all SQL commands (split on ';')
+            print(sqlFile);
+            try:
+                db_cur.execute(sqlFile)
+            except Exception as inst:
+                db_cur.close();
+                print("Command skipped: for file " + filename + ":", inst)
+            db_cur.close();
+            print('before executing select')
+
+
+def generate_alters_sql_file_from_excel(file_name):
+    input_df = pd.read_excel(file_name)
+    file_ath_for_alters = 'alters_for_tables.sql'
+    f = open(file_ath_for_alters, "w")
+    for index, row in input_df.iterrows():
+        if row['WHERE_EXISTS'] == 'GVSPROD':
+            owner_name_for_alter = row["OWNER"]
+            table_name_for_alter = row["TABLE_NAME"]
+            column_name_for_alter = row["COLUMN_NAME"]
+            datatype_name_for_alter = row["DATA_TYPE"]
+            data_length_for_alter = row["SRC_DATA_LENGTH"]
+            data_precision_for_alter = row["SRC_DATA_PRECISION"]
+            if math.isnan(data_precision_for_alter):
+                sql_statement = ' alter table ' + owner_name_for_alter + '.' + table_name_for_alter + ' ADD (' + column_name_for_alter + ' ' + datatype_name_for_alter + '(' + str(
+                    data_length_for_alter) + '));'
+            else:
+                data_precision_for_alter = int(data_precision_for_alter)
+                sql_statement = ' alter table ' + owner_name_for_alter + '.' + table_name_for_alter + ' ADD (' + column_name_for_alter + ' ' + datatype_name_for_alter + '(' + str(
+                    data_length_for_alter) + ',' + str(data_precision_for_alter) + '));'
+            # print(sql_statement);
+            f.write(sql_statement + '\n')
+    f.close()
+
+
+def execute_all_alters(db_conn):
+    f = open('alters_for_tables.sql')
+    curs = db_conn.cursor();
+    full_sql = f.read()
+    sql_commands = full_sql.split(';')
+    for sql_command in sql_commands:
+        print(sql_command);
+        try:
+            curs.execute(sql_command)
+        except Exception as inst:
+            print("Command skipped: for file " + filename + ":", inst)
+    curs.close()
+
+
+if __name__ == "__main__":
+    # Creating DB connection and getting table row count
+    orcl.init_oracle_client(lib_dir=r"C:\instantclient_11_2")
+    orcl.defaults.fetch_lobs = False
+    src_sql_cnxn = get_oracle_database_connection(src_server, src_user_name, src_pwd, src_port, src_service_name);
+    print('Connected to source oracle')
+    trg_sql_cnxn = get_oracle_database_connection(trg_server, trg_user_name, trg_pwd, trg_port, trg_service_name);
+    print('Connected to target oracle')
+
+    # Getting details for DB objects
+    src_df = get_results_from_query(src_sql_cnxn, src_sql_stmt_db_objects)
+    # src_df.to_excel("SRC_DF_FOR_OBJECTS.xlsx", index=False)
+    src_df.to_csv("SRC_DF_FOR_OBJECTS_CSV.csv", index=False)
+    trg_df = get_results_from_query(trg_sql_cnxn, trg_sql_stmt_db_objects)
+    # trg_df.to_excel("TRG_DF_FOR_OBJECTS.xlsx", index=False)
+    trg_df.to_csv("TRG_DF_FOR_OBJECTS_CSV.csv", index=False)
+    db_objects_diff = compare_dataframes(src_df, trg_df, ['OWNER', 'OBJECT_NAME', 'OBJECT_TYPE'])
+    db_objects_diff = db_objects_diff[db_objects_diff['WHERE_EXISTS'] == 'GVSPROD']
+    print('compare is done ')
+    db_objects_diff.to_excel("DB_OBJECTS_DIFF.xlsx", index=False)
+    db_objects_diff.to_csv("DB_OBJECTS_DIFF_CSV.csv", index=FalseazZ)
+    print('compare is done and file was written to ')
+    genereate_ddl_file_for_mising_objects(src_sql_cnxn, "DB_OBJECTS_DIFF.xlsx")
+    print('generated ddls for missing objects');
+    execute_sql_scripts_from_directory(trg_sql_cnxn);
+    # getting details for db colummns
+
+    # Missing columns
+    src_cols_df = get_results_from_query(src_sql_cnxn, src_sql_stmt_db_columns)
+    # src_cols_df.to_excel("SRC_DF_FOR_COLUMNS.xlsx", index=False)
+    src_cols_df.to_csv("SRC_DF_FOR_COLUMNS_CSV.csv", index=False)
+    trg_cols_df = get_results_from_query(trg_sql_cnxn, trg_sql_stmt_db_columns)
+    # trg_cols_df.to_excel("TRG_DF_FOR_COLUMNS.xlsx", index=False)
+    trg_cols_df.to_csv("TRG_DF_FOR_COLUMNS_CSV.csv", index=False)
+    db_columns_diff = compare_dataframes(src_cols_df, trg_cols_df, ['OWNER', 'TABLE_NAME', 'COLUMN_NAME', 'DATA_TYPE'])
+    db_columns_diff.to_excel("DB_COLUMNS_DIFF.xlsx", index=False)
+    db_columns_diff.to_csv("DB_COLUMNS_DIFF_CSV.csv", index=False)
+    generate_alters_sql_file_from_excel("DB_COLUMNS_DIFF.xlsx")
+
+    # execute_all_alters(trg_sql_cnxn);
+
+    src_sql_cnxn.close();
+    trg_sql_cnxn.close();
+    print('Script Executed Successfully please validate generated output files')
